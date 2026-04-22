@@ -1,4 +1,8 @@
-: Why did you study computer science?
+This looks like answer framework
+
+
+
+Q: Why did you study computer science?
 A: I enjoy building systems that translate ideas into real-world applications.
 
 Q: What are your strengths?

@@ -1,0 +1,4 @@
+- Be concise but clear
+- Sound confident but not arrogant
+- Avoid overly generic answers
+- Use structured thinking when explaining

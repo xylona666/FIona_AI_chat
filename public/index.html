@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hello Fiona
+    </title>
+</head>
+<body>
+    <div style="text-align: center; padding: 20px;">
+        <h1>Chat with Fiona</h1> 
+        <p>Your AI persona will appear below and start automatically</p>
+        <video id="persona-video" autoplay playsinline style="max-width: 100%; border-radius: 8px;"></video>
+        <div id="status" style="margin-top: 15px; font-size: 14px; color: #666;">Loading...</div>
+        <button id="start-chat-btn" style="margin-top: 16px; padding: 10px 20px; background-color: #111827; color: white; border: none; border-radius: 5px; cursor: pointer;">
+            Start Chat
+        </button>  // add a button to start the chat, in case auto-start fails or user wants to restart
+
+        <!-- Microphone Test Section -->
+        <button id="mic-test-btn" style="margin-top: 20px; padding: 10px 20px; background-color: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer;">
+            Test Microphone
+        </button>
+        <div id="mic-status" style="margin-top: 10px; font-size: 14px; color: #666;"></div>
+    </div>
+<script type="module">  
+    import { createClient } from "https://esm.sh/@anam-ai/js-sdk@latest";
+
+ 
+    
+    const statusElement = document.getElementById("status");
+    const startChatButton = document.getElementById("start-chat-btn");
+    const micTestButton = document.getElementById("mic-test-btn");
+    
+    // function 设计fuction
+    async function createSessionToken() {
+    const response = await fetch("http://localhost:3000/api/session-token", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+        },
+    });
+    if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Failed to create session token: ${response.status} - ${text}`);
+    }
+    const data = await response.json();
+    return data.sessionToken;
+    }
+
+    async function startChat() {
+        try {
+            if (!navigator.mediaDevices?.getUserMedia) {
+            statusElement.textContent = "This browser does not support microphone access.";
+            statusElement.style.color = "#dc3545";
+            return;  //test if the browser supports microphone access
+        }
+            
+            startChatButton.disabled = true; // Disable禁用 the start button to prevent multiple clicks
+            statusElement.textContent = "Creating session...";
+
+            const sessionToken = await createSessionToken(); //
+            statusElement.textContent = "Connecting...";
+
+            const anamClient = createClient(sessionToken);
+            await anamClient.streamToVideoElement("persona-video"); // 控制虚拟人
+
+            statusElement.textContent = "Connected! Start speaking to Cara";
+
+        } catch (error) {
+            console.error("Failed to start chat:", error);
+            statusElement.textContent = "Failed to connect. Check your API key.";
+        }
+    }
+    // Event binding 绑定事件,点击,才start
+    // button-start-chat functionality
+    startChatButton.addEventListener("click", async () => {
+        await navigator.mediaDevices.getUserMedia({ audio: true });
+        await startChat();
+});
+    // Microphone test functionality
+    micTestButton.addEventListener('click', async () => {
+        const micStatusElement = document.getElementById('mic-status');
+        const btn = document.getElementById('mic-test-btn');
+        
+        btn.disabled = true;
+        micStatusElement.textContent = "Testing microphone...";
+        // begin test
+    try {
+    
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+        // test successful, stop the stream immediately since we just wanted to check access
+        stream.getTracks().forEach(track => track.stop());
+
+        micStatusElement.textContent = "✅ Microphone is working!";
+        micStatusElement.style.color = "#28a745";
+
+    } catch (err) {
+        console.error(err);
+
+        micStatusElement.textContent = `❌ Error: ${err.name}`;
+        micStatusElement.style.color = "#dc3545";
+    } finally {
+        btn.disabled = false;
+    }
+});
+</script>
+</body>
+</html>

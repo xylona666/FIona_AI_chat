@@ -1,20 +1,38 @@
 import express from "express";
 import dotenv from "dotenv";
 import OpenAI from "openai";
-import fs from "fs";
+import cors from "cors";
 
 dotenv.config();
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
+
+app.use(cors());
+app.use(express.json());
+app.use(express.static("public"));
 
 const client = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
-const personaConfig = {
-  name: "Fiona",
-  personaId: "3dbd92d2-d447-4e7c-81f4-023e5921e683",
 
+function getConversationMessages(body) {
+  const { message, messages } = body;
+
+  if (Array.isArray(messages)) {
+    return messages;
+  }
+
+  if (message) {
+    return [{ role: "user", content: message }];
+  }
+
+  return [];
+}
+
+const personaConfig = {
+  personaId: "3dbd92d2-d447-4e7c-81f4-023e5921e683",
+  llmId: "CUSTOMER_CLIENT_V1",
 };
 app.post("/api/session-token", async (req, res) => {
   const anamApiKey = process.env.ANAM_API_KEY;
@@ -43,6 +61,7 @@ app.post("/api/session-token", async (req, res) => {
 
       return res.status(response.status).json({
         error: "Failed to get session token",
+        details: errorText,
       });
     }
 
@@ -56,35 +75,88 @@ app.post("/api/session-token", async (req, res) => {
 
     return res.status(500).json({
       error: "Failed to get session token",
+      details: error.message,
     });
   }
 });
 
-app.post("/chat", async (req, res) => { // only chat 
-    try {
-    const { message } = req.body;
+app.post("/chat-stream", async (req, res) => {
+  try {
+    if (!process.env.OPENAI_API_KEY) {
+      return res.status(500).json({ error: "OPENAI_API_KEY is not configured" });
+    }
+
+    const conversationMessages = getConversationMessages(req.body);
+
+    if (!conversationMessages.length || !conversationMessages.at(-1)?.content) {
+      return res.status(400).json({ error: "message is required" });
+    }
+
+    const completion = await client.chat.completions.create({
+      model: "gpt-4o-mini",
+      stream: true,
+      messages: [
+        {
+          role: "system",
+          content: "You are Fiona, a warm and helpful AI assistant. Keep replies concise and conversational.",
+        },
+        ...conversationMessages,
+      ],
+    });
+
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+
+    for await (const chunk of completion) {
+      const content = chunk.choices[0]?.delta?.content || "";
+
+      if (content) {
+        res.write(`${JSON.stringify({ content })}\n`);
+      }
+    }
+
+    res.end();
+  } catch (error) {
+    console.error(error);
+    res.status(error.status || 500).json({
+      error: "LLM failed",
+      details: error.error?.message || error.message,
+    });
+  }
+});
+
+app.post("/chat", async (req, res) => {
+  try {
+    if (!process.env.OPENAI_API_KEY) {
+      return res.status(500).json({ error: "OPENAI_API_KEY is not configured" });
+    }
+
+    const conversationMessages = getConversationMessages(req.body);
+
+    if (!conversationMessages.length || !conversationMessages.at(-1)?.content) {
+      return res.status(400).json({ error: "message is required" });
+    }
 
     const completion = await client.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         {
           role: "system",
-          content: "You are a helpful assistant.",
+          content: "You are Fiona, a warm and helpful AI assistant. Keep replies concise and conversational.",
         },
-        {
-          role: "user",
-          content: message,
-        },
+        ...conversationMessages,
       ],
     });
 
     const reply = completion.choices[0].message.content;
-
     res.json({ reply });
-
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: "LLM failed" });
+    res.status(error.status || 500).json({
+      error: "LLM failed",
+      details: error.error?.message || error.message,
+    });
   }
 });
 
@@ -97,12 +169,7 @@ app.post("/test", (req, res) => {
 });
 
 
-
-
-
-
  
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
-  console.log(process.env.OPENAI_API_KEY);
 });

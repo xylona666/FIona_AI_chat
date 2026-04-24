@@ -9,31 +9,270 @@
 <body>
     <div style="text-align: center; padding: 20px;">
         <h1>Chat with Fiona</h1> 
-        <p>Your AI persona will appear below and start automatically</p>
-        <video id="persona-video" autoplay playsinline style="max-width: 100%; border-radius: 8px;"></video>
-        <div id="status" style="margin-top: 15px; font-size: 14px; color: #666;">Loading...</div>
+        <p>Your AI persona will appear below after you start the chat.</p>
+        <div id="loading-message" style="display: none; margin-bottom: 12px; color: #6b7280;">Loading...</div>
+        <video
+            id="persona-video"
+            autoplay
+            playsinline
+            muted
+            style="width: 640px; max-width: 100%; min-height: 360px; background: #111827; border-radius: 8px;"
+        ></video>
+        <div id="status" style="margin-top: 15px; font-size: 14px; color: #666;">Click Start Chat to load Fiona.</div>
         <button id="start-chat-btn" style="margin-top: 16px; padding: 10px 20px; background-color: #111827; color: white; border: none; border-radius: 5px; cursor: pointer;">
             Start Chat
-        </button>  // add a button to start the chat, in case auto-start fails or user wants to restart
+        </button>
+        <button id="stop-chat-btn" disabled style="margin-top: 16px; padding: 10px 20px; background-color: #6b7280; color: white; border: none; border-radius: 5px; cursor: pointer;">
+            Stop Chat
+        </button>
 
         <!-- Microphone Test Section -->
         <button id="mic-test-btn" style="margin-top: 20px; padding: 10px 20px; background-color: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer;">
             Test Microphone
         </button>
         <div id="mic-status" style="margin-top: 10px; font-size: 14px; color: #666;"></div>
+
+        <!-- Chat History Panel -->
+        <div
+            id="chat-history"
+            style="max-width: 640px; margin: 20px auto 0; padding: 12px; border: 1px solid #ccc; border-radius: 5px; max-height: 200px; overflow-y: auto; text-align: left; background: #fff;"
+        >
+            <p id="chat-history-empty" style="margin: 0; color: #6b7280;">Start a conversation to see your chat history</p>
+        </div>
+
+        <section style="max-width: 640px; margin: 28px auto 0; text-align: left;">
+            <h2 style="margin-bottom: 10px;">Text Chat with Streaming LLM</h2>
+            <div
+                id="chat-log"
+                style="min-height: 160px; max-height: 280px; overflow-y: auto; padding: 14px; border: 1px solid #d1d5db; border-radius: 8px; background: #f9fafb;"
+            >
+                <p style="margin: 0; color: #6b7280;">Ask Fiona a question here to test the OpenAI LLM.</p>
+            </div>
+            <form id="chat-form" style="display: flex; gap: 8px; margin-top: 12px;">
+                <input
+                    id="chat-input"
+                    type="text"
+                    placeholder="Type a message..."
+                    autocomplete="off"
+                    style="flex: 1; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 6px;"
+                />
+                <button
+                    id="send-chat-btn"
+                    type="submit"
+                    style="padding: 10px 18px; background-color: #111827; color: white; border: none; border-radius: 6px; cursor: pointer;"
+                >
+                    Send
+                </button>
+            </form>
+        </section>
     </div>
 <script type="module">  
-    import { createClient } from "https://esm.sh/@anam-ai/js-sdk@latest";
+    import { createClient, AnamEvent } from "https://esm.sh/@anam-ai/js-sdk@latest";
 
  
     
     const statusElement = document.getElementById("status");
     const startChatButton = document.getElementById("start-chat-btn");
+    const stopChatButton = document.getElementById("stop-chat-btn");
     const micTestButton = document.getElementById("mic-test-btn");
-    
-    // function 设计fuction
+    const videoElement = document.getElementById("persona-video");
+    const loadingMessage = document.getElementById("loading-message");
+    const chatForm = document.getElementById("chat-form");
+    const chatInput = document.getElementById("chat-input");
+    const chatLog = document.getElementById("chat-log");
+    const chatHistory = document.getElementById("chat-history");
+    const sendChatButton = document.getElementById("send-chat-btn");
+    let anamClient = null;
+    let conversationMessages = [];
+    let lastHandledUserMessage = "";
+    let isHandlingVoiceMessage = false;
+
+    function showLoadingState() {
+        loadingMessage.style.display = "block";
+    }
+
+    function hideLoadingState() {
+        loadingMessage.style.display = "none";
+    }
+
+    function createMessageElement(sender, text) {
+        const messageElement = document.createElement("p");
+        const senderElement = document.createElement("strong");
+        const contentElement = document.createElement("span");
+
+        messageElement.style.margin = "0 0 10px";
+        senderElement.textContent = `${sender}:`;
+        contentElement.textContent = ` ${text}`;
+
+        messageElement.appendChild(senderElement);
+        messageElement.appendChild(contentElement);
+        return { messageElement, contentElement };
+    }
+
+    function addMessage(sender, text, options = {}) {
+        const chatHistoryEmpty = document.getElementById("chat-history-empty");
+        const role = sender === "You" ? "user" : "assistant";
+
+        if (chatHistoryEmpty) {
+            chatHistoryEmpty.remove();
+        }
+
+        if (!options.skipHistory) {
+            conversationMessages.push({ role, content: text });
+        }
+
+        const logMessage = createMessageElement(sender, text);
+        const historyMessage = createMessageElement(sender, text);
+
+        chatLog.appendChild(logMessage.messageElement);
+        chatHistory.appendChild(historyMessage.messageElement);
+        chatLog.scrollTop = chatLog.scrollHeight;
+        chatHistory.scrollTop = chatHistory.scrollHeight;
+    }
+
+    function createStreamingMessage(sender) {
+        const logMessage = createMessageElement(sender, "");
+        const historyMessage = createMessageElement(sender, "");
+
+        chatLog.appendChild(logMessage.messageElement);
+        chatHistory.appendChild(historyMessage.messageElement);
+        chatLog.scrollTop = chatLog.scrollHeight;
+        chatHistory.scrollTop = chatHistory.scrollHeight;
+
+        return {
+            update(text) {
+                logMessage.contentElement.textContent = ` ${text}`;
+                historyMessage.contentElement.textContent = ` ${text}`;
+                chatLog.scrollTop = chatLog.scrollHeight;
+                chatHistory.scrollTop = chatHistory.scrollHeight;
+            },
+        };
+    }
+
+    function updateChatHistory(messages) {
+        chatHistory.innerHTML = "";
+        conversationMessages = messages || [];
+
+        if (!messages || messages.length === 0) {
+            const emptyMessage = document.createElement("p");
+            emptyMessage.id = "chat-history-empty";
+            emptyMessage.style.margin = "0";
+            emptyMessage.style.color = "#6b7280";
+            emptyMessage.textContent = "Start a conversation to see your chat history";
+            chatHistory.appendChild(emptyMessage);
+            return;
+        }
+
+        messages.forEach((message) => {
+            const sender = message.role === "user" ? "You" : "Fiona";
+            const { messageElement } = createMessageElement(sender, message.content);
+
+            messageElement.style.padding = "6px";
+            messageElement.style.borderRadius = "5px";
+            messageElement.style.backgroundColor = message.role === "user" ? "#e3f2fd" : "#f1f8e9";
+
+            chatHistory.appendChild(messageElement);
+        });
+
+        chatHistory.scrollTop = chatHistory.scrollHeight;
+    }
+
+    async function speakWithFiona(text) {
+        if (!anamClient) {
+            statusElement.textContent = "LLM replied. Start Fiona to hear the reply spoken aloud.";
+            statusElement.style.color = "#666";
+            return;
+        }
+
+        statusElement.textContent = "Fiona is speaking...";
+        statusElement.style.color = "#28a745";
+        await anamClient.talk(text);
+    }
+
+    async function streamLlmReply(messages, onChunk) {
+        const response = await fetch("/chat-stream", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ messages }),
+        });
+
+        if (!response.ok) {
+            const text = await response.text();
+            throw new Error(`LLM request failed: ${response.status} - ${text}`);
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let reply = "";
+
+        while (true) {
+            const { done, value } = await reader.read();
+
+            if (done) {
+                break;
+            }
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() || "";
+
+            for (const line of lines) {
+                if (!line.trim()) {
+                    continue;
+                }
+
+                const data = JSON.parse(line);
+                reply += data.content || "";
+                onChunk(reply);
+            }
+        }
+
+        if (buffer.trim()) {
+            const data = JSON.parse(buffer);
+            reply += data.content || "";
+            onChunk(reply);
+        }
+
+        return reply;
+    }
+
+    async function answerLatestUserMessage(messages) {
+        const latestMessage = messages[messages.length - 1];
+
+        if (!latestMessage || latestMessage.role !== "user") {
+            return;
+        }
+
+        if (isHandlingVoiceMessage || latestMessage.content === lastHandledUserMessage) {
+            return;
+        }
+
+        isHandlingVoiceMessage = true;
+        lastHandledUserMessage = latestMessage.content;
+        statusElement.textContent = "Fiona is thinking...";
+        statusElement.style.color = "#666";
+
+        try {
+            const streamingMessage = createStreamingMessage("Fiona");
+            const reply = await streamLlmReply(messages, (partialReply) => {
+                streamingMessage.update(partialReply);
+            });
+
+            conversationMessages.push({ role: "assistant", content: reply });
+            await speakWithFiona(reply);
+        } catch (error) {
+            console.error("Failed to answer voice message:", error);
+            addMessage("Error", error.message);
+        } finally {
+            isHandlingVoiceMessage = false;
+        }
+    }
+     
     async function createSessionToken() {
-    const response = await fetch("http://localhost:3000/api/session-token", {
+    const response = await fetch("/api/session-token", {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
@@ -56,27 +295,77 @@
         }
             
             startChatButton.disabled = true; // Disable禁用 the start button to prevent multiple clicks
+            showLoadingState();
             statusElement.textContent = "Creating session...";
+
+            const micStream = await navigator.mediaDevices.getUserMedia({
+                audio: true,
+                video: false,
+            });
 
             const sessionToken = await createSessionToken(); //
             statusElement.textContent = "Connecting...";
 
-            const anamClient = createClient(sessionToken);
-            await anamClient.streamToVideoElement("persona-video"); // 控制虚拟人
+            anamClient = createClient(sessionToken);
 
-            statusElement.textContent = "Connected! Start speaking to Cara";
+            anamClient.addListener(AnamEvent.CONNECTION_ESTABLISHED, () => {
+                statusElement.textContent = "Connected! Fiona is loading...";
+                statusElement.style.color = "#28a745";
+            });
+
+            anamClient.addListener(AnamEvent.SESSION_READY, () => {
+                hideLoadingState();
+                startChatButton.disabled = true;
+                stopChatButton.disabled = false;
+                statusElement.textContent = "Fiona is ready. Start speaking.";
+                statusElement.style.color = "#28a745";
+            });
+
+            anamClient.addListener(AnamEvent.MESSAGE_HISTORY_UPDATED, (messages) => {
+                console.log("Conversation updated:", messages);
+                updateChatHistory(messages);
+                answerLatestUserMessage(messages);
+            });
+
+            await anamClient.streamToVideoElement("persona-video", micStream); // 控制虚拟人
+
+            statusElement.textContent = "Connected! Start speaking to Fiona.";
 
         } catch (error) {
             console.error("Failed to start chat:", error);
-            statusElement.textContent = "Failed to connect. Check your API key.";
+            statusElement.textContent = `Failed to connect: ${error.message}`;
+            statusElement.style.color = "#dc3545";
+            hideLoadingState();
+            startChatButton.disabled = false;
+            stopChatButton.disabled = true;
         }
     }
+
+    function stopChat() {
+        if (anamClient) {
+            anamClient.stopStreaming();
+            anamClient = null;
+        }
+
+        videoElement.srcObject = null;
+        hideLoadingState();
+        conversationMessages = [];
+        lastHandledUserMessage = "";
+        isHandlingVoiceMessage = false;
+        updateChatHistory([]);
+
+        startChatButton.disabled = false;
+        stopChatButton.disabled = true;
+        statusElement.textContent = "Chat stopped. Click Start Chat to load Fiona again.";
+        statusElement.style.color = "#666";
+    }
+
     // Event binding 绑定事件,点击,才start
     // button-start-chat functionality
     startChatButton.addEventListener("click", async () => {
-        await navigator.mediaDevices.getUserMedia({ audio: true });
         await startChat();
 });
+    stopChatButton.addEventListener("click", stopChat);
     // Microphone test functionality
     micTestButton.addEventListener('click', async () => {
         const micStatusElement = document.getElementById('mic-status');
@@ -104,6 +393,40 @@
         btn.disabled = false;
     }
 });
+
+    chatForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+
+        const message = chatInput.value.trim();
+
+        if (!message) {
+            return;
+        }
+
+        addMessage("You", message);
+        chatInput.value = "";
+        chatInput.disabled = true;
+        sendChatButton.disabled = true;
+        sendChatButton.textContent = "Sending...";
+
+        try {
+            const streamingMessage = createStreamingMessage("Fiona");
+            const reply = await streamLlmReply(conversationMessages, (partialReply) => {
+                streamingMessage.update(partialReply);
+            });
+
+            conversationMessages.push({ role: "assistant", content: reply });
+            await speakWithFiona(reply);
+        } catch (error) {
+            console.error("Failed to send chat message:", error);
+            addMessage("Error", error.message);
+        } finally {
+            chatInput.disabled = false;
+            sendChatButton.disabled = false;
+            sendChatButton.textContent = "Send";
+            chatInput.focus();
+        }
+    });
 </script>
 </body>
 </html>
